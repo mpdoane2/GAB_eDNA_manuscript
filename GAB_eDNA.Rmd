@@ -1,0 +1,69 @@
+---
+title: "GAB_eDNA"
+author: "Michael Doane"
+date: "2023-03-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(dplyr)
+library(tidyverse)
+```
+
+
+Bring the 16s Elasmo eDNA Data into R
+```{r}
+
+##### 16s Data #####
+primer_16nest <- read.csv ("16s_r_data.csv", header = TRUE)
+
+##### zOTU table for dataset #####
+otu_table_16s <- read.csv ("gab16nest_otu_R.csv", header = FALSE)
+otu_table_16s <- otu_table_16s %>% rename ("OTU" =1, "sequence"=2)
+
+##### Join the zOTU sequence with the dataset for downstream analysis
+primer_16nest <- primer_16nest %>% full_join (otu_table_16s, by = "OTU")
+
+##### Elasmo-COI Data #####
+primer_elasmo <- read.csv ("elasmo_r_data.csv", header = TRUE)
+
+##### zOTU table for dataset #####
+otu_table_elasmo <- read.csv ("gabelasmo_otu_R.csv", header = FALSE)
+otu_table_elasmo <- otu_table_elasmo %>% rename ("OTU" =1, "sequence"=2)
+
+##### Join the zOTU sequence with the dataset for downstream analysis
+primer_elasmo <- primer_elasmo %>% full_join (otu_table_elasmo, by = "OTU")
+
+```
+
+Bring the BRUV Data into R
+```{r}
+
+##### 16s Data #####
+primer_16nest <- read.csv ("16s_r_data.csv", header = TRUE)
+
+##### zOTU table for dataset #####
+otu_table_16s <- read.csv ("gab16nest_otu_R.csv", header = FALSE)
+otu_table_16s <- otu_table_16s %>% rename ("OTU" =1, "sequence"=2)
+
+##### Join the zOTU sequence with the dataset for downstream analysis
+primer_16nest <- primer_16nest %>% full_join (otu_table_16s, by = "OTU")
+
+##### Elasmo-COI Data #####
+primer_elasmo <- read.csv ("elasmo_r_data.csv", header = TRUE)
+
+##### zOTU table for dataset #####
+otu_table_elasmo <- read.csv ("gabelasmo_otu_R.csv", header = FALSE)
+otu_table_elasmo <- otu_table_elasmo %>% rename ("OTU" =1, "sequence"=2)
+
+##### Join the zOTU sequence with the dataset for downstream analysis
+primer_elasmo <- primer_elasmo %>% full_join (otu_table_elasmo, by = "OTU")
+
+```
+
+
