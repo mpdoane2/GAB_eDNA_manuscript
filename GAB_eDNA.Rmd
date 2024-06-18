@@ -3,6 +3,8 @@ title: "GAB_eDNA"
 author: "Michael Doane"
 date: "2023-03-23"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -13,6 +15,48 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(dplyr)
 library(tidyverse)
+library(tidyr)
+library(readxl)
+library(vegan)
+library(ggplot2)
+library(plyr)
+library(dunn.test)
+#library(DESeq2)
+library(ggthemes)
+library(gridExtra)
+library(grid)
+library(ragg)
+library(ggpubr)
+
+if (getwd() != "\\\\usercd/d/doan0033/Documents" && getwd() != "C:/Users/Mike/Documents") {
+  setwd(Sys.getenv("HOME"))
+}
+
+if(getwd() == "C:/Users/Mike/Documents") {
+  comp.dir <- "C:/Users/Mike/"
+  setwd("C:/Users/Mike/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+  working_dir <- "C:/Users/Mike/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/"
+} else {
+  comp.dir <- 'C:/Users/doan0033'
+  setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+  workiing_dir <- "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/"
+}
+
+
+#if (computer == 'flinders') { 
+  #comp.dir <- 'C:/Users/doan0033/'
+  #setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+#} else {   
+  #comp.dir <- 'C:/Users/Mike/'
+  #setwd("C:/Users/Mike/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+#}
+
+r.source <- paste(comp.dir, 'Dropbox/IMOS_project/r_markdown', sep = '/')
+source (paste(r.source, 'common.scripts', 'theme_mike_doane.r', sep = "/")) # Theme Mike Doane for ggplot
+
+sites_color <- c("#000000", "#E69F00", "#56B4E9", "#009E73") 
+method_color <- c("#0072B2", "#D55E00")
+fish_color <- c("#44AA99","#999933", "#CC6677" )
 ```
 
 
@@ -20,50 +64,1292 @@ Bring the 16s Elasmo eDNA Data into R
 ```{r}
 
 ##### 16s Data #####
-primer_16nest <- read.csv ("16s_r_data.csv", header = TRUE)
+primer_16nest <- read.csv ("r_16s_data.csv", header = TRUE) #14-45
 
-##### zOTU table for dataset #####
-otu_table_16s <- read.csv ("gab16nest_otu_R.csv", header = FALSE)
-otu_table_16s <- otu_table_16s %>% rename ("OTU" =1, "sequence"=2)
+p_16nest_long <- primer_16nest %>% 
+  pivot_longer(cols = WE_01:EI_04, names_to = "sample_names", values_to = "pa") %>% 
+  mutate (assay = "16nest", type = "edna") %>%
+  dplyr::select (domain, phylum, class, order, family, genus, species, OTU, assay, type, sample_names, pa)
 
-##### Join the zOTU sequence with the dataset for downstream analysis
-primer_16nest <- primer_16nest %>% full_join (otu_table_16s, by = "OTU")
 
 ##### Elasmo-COI Data #####
-primer_elasmo <- read.csv ("elasmo_r_data.csv", header = TRUE)
+primer_elasmo <- read.csv ("r_elasmo_data.csv", header = TRUE)
 
-##### zOTU table for dataset #####
-otu_table_elasmo <- read.csv ("gabelasmo_otu_R.csv", header = FALSE)
-otu_table_elasmo <- otu_table_elasmo %>% rename ("OTU" =1, "sequence"=2)
+p_elasmo_long <- primer_elasmo %>% 
+  pivot_longer(cols = WE_01:EI_04, names_to = "sample_names", values_to = "pa") %>% 
+  mutate (assay = "elasmo", type = "edna") %>%
+  dplyr::select (domain, phylum, class, order, family, genus, species, OTU, assay, type, sample_names, pa)
 
-##### Join the zOTU sequence with the dataset for downstream analysis
-primer_elasmo <- primer_elasmo %>% full_join (otu_table_elasmo, by = "OTU")
+##### Combine eDNA data set #####
+edna_df <- rbind (p_16nest_long, p_elasmo_long)
+edna_long <- edna_df %>% 
+  group_by (sample_names, species) %>% 
+  mutate (sum = sum(pa)) %>% 
+  distinct (sample_names, species, .keep_all = T) %>%
+  mutate (pa = ifelse (sum >0, 1, 0)) %>%
+  dplyr::select (domain, phylum, class, order, family, genus, species, sample_names, pa) %>%
+  mutate (sample_names = factor(sample_names))
+  #pivot_wider (names_from = "sample", values_from = "pa")
+check <- edna_long %>% filter (species == "Argyrosomus japonicus")
+check %>% filter (pa == 1)
+#write.csv (edna_long, "edna_combined.csv")
 
+##### Make Wide BRUV data format #####
+bruv <- read_excel ("../working_dir/GAB_bruv_final.xlsx", sheet = "All")
+bruv$`Sample Names` <- as.factor(bruv$sample_names)
+bruv$MaxN <- as.integer (bruv$MaxN)
+bruv_long <- bruv %>% 
+  mutate (domain = NA, phylum = NA, class = NA, order = NA,OTU = NA, assay = "BRUV", type = "BRUV", pa = MaxN, genus_x = genus) %>%
+  unite (x, c(genus, species)) %>%
+  rename (species = x, genus = genus_x) %>%
+  dplyr::select (domain, phylum, class, order, family, genus, species, OTU, assay, type, sample_names, pa) %>%
+  dplyr::group_by(domain, phylum, class, order, family, genus, species, OTU, assay, type, sample_names) %>%
+  distinct(.keep_all=TRUE) %>%
+  mutate (species = str_replace(species, "_", " "))
+
+##### To find duplicates in a dataset run the below command #####
+# bruv_long %>%
+#   dplyr::group_by(domain, phylum, class, order, family, genus, species, OTU, assay, type, sample_names) %>%
+#   dplyr::summarise(n = dplyr::n(), .groups = "drop") %>%
+#   dplyr::filter(n > 1L)
+
+bruv_wide <- bruv_long  %>% 
+  ungroup() %>%
+  pivot_wider (names_from = sample_names, values_from = pa, values_fill = 0) 
+
+#write.csv (bruv_long, "bruv_temp.csv")
+
+
+
+##### Merge datasets together #####
+community_long <- rbind(p_16nest_long, p_elasmo_long, bruv_long)
+community_wide<- community_long %>% 
+  select(-c(OTU, type)) %>%
+  group_by(type, sample_names, species) %>% 
+  #distinct(species, .keep_all = TRUE) %>% 
+  pivot_wider (names_from = sample_names, values_from = pa, values_fill = 0) %>% 
+  dplyr::select(-assay) %>%
+  group_by (species) %>%
+  arrange(species)
+
+duplicated_rows <- community_wide[duplicated(community_wide[["species"]]) | duplicated(community_wide[["species"]], fromLast = TRUE), ]
+duplicated_rows <- duplicated_rows %>% arrange(!! as.name("species")) 
+
+
+#write.csv (community_wide, "gab_community.csv")
+dim(community_long %>% group_by (type,sample_names,species) %>% distinct() %>% count() %>% arrange(desc(n)))
+
+  #write.csv (bruv_wide_test, "bruv_wide.csv")
+
+##### BRUV Data #####
+bruv <- read_excel ("../working_dir/GAB_bruv_final.xlsx", sheet = "All")
+bruv$`Sample Names` <- as.factor(bruv$`Sample Names`)
+bruv$MaxN <- as.integer (bruv$MaxN)
+bruv <- bruv %>% select (`Sample Names`, Family, Genus, Species, MaxN)
+
+bruv <- bruv %>% 
+  unite ("taxa", Family:Genus:Species, sep = ":") %>% 
+  select (`Sample Names`, taxa, MaxN)
+################
+bruv_wide <- bruv %>% 
+  group_by (`Sample Names`) %>% 
+  distinct (taxa, .keep_all = T) %>% 
+  pivot_wider (names_from = `Sample Names`, values_from = MaxN, values_fill = 0) %>% 
+  column_to_rownames("taxa")
+
+bruv_wide <- decostand (bruv_wide, "pa")
+
+#write.csv (bruv_wide, "r_bruv_wide.csv")
+
+
+bruv <- read.csv ("r_bruv_wide.csv")
+
+all <- edna_long %>% 
+  full_join (., bruv, by = c("domain", "phylum", "class", "order", "family", "genus", "species")) %>% 
+  mutate_all (., ~replace_na(.,0)) %>%
+  group_by ()
+
+write.csv (all, "species_combined.csv")
+
+all_genus <- all %>% pivot_longer (cols = WE_01:WE_08_B, names_to ="sample", values_to="pa") %>% group_by(sample,genus)%>%mutate(x = sum(pa)) %>% dplyr::select(-pa) %>%mutate (x = ifelse(x>0, 1, 0))%>% pivot_wider (names_from="sample", values_from=x, values_fill = 0)
 ```
 
-Bring the BRUV Data into R
+
+########################################################################################################################################
+#######################################    Bring metadata into R #######################################################################
+########################################################################################################################################
+
+```{r}
+gab_meta <- read_excel ("../working_dir/GAB_metadata.xlsx")
+
+gab_meta <- read_excel ("../working_dir/GAB_metadata.xlsx") %>%
+  mutate (site_group = fct_recode (site_group, "Isle St Francis" = "ISF", "Western Eyre" = "WE")) %>%
+  mutate (site_group = fct_relevel (site_group, c("Lacy", "Isle St Francis", "Murat", "Western Eyre"))) 
+
+depth_boxplot <- ggplot(gab_meta %>% distinct(sample_name, .keep_all = TRUE), aes (site_group, depth, fill = site_group)) +
+  geom_boxplot() +
+  geom_jitter (size = 5) +
+  #scale_color_colorblind () +
+  scale_fill_colorblind () +
+  scale_x_discrete (name = "Location") +
+  scale_y_continuous (name = "Depth (m)") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         legend.position = "none",
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+depth_boxplot
+
+
+png(file="R_figures/site_depth.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+cowplot::plot_grid (depth_boxplot)
+dev.off()
+
+kruskal.test (depth ~ site_group, data = gab_meta)
+dunn.test::dunn.test(gab_meta$depth, gab_meta$site_group)
+
+depth_site_summary <- gab_meta %>%
+  group_by (site_group) %>%
+  dplyr::summarise(mean_depth = mean (depth),
+            SD_depth = sd(depth),
+            SE_depth = SD_depth/sqrt(n()))
+
+ggplot(gab_meta %>% distinct(sample_name, .keep_all = TRUE), aes (Group, depth, fill = Group)) +
+  geom_boxplot() +
+  #scale_color_colorblind () +
+  scale_fill_colorblind () +
+  theme_mike_doane()
+
+dunn.test::dunn.test(gab_meta$depth, gab_meta$Group)
+
+depth_Group_summary <- gab_meta %>%
+  group_by (Group) %>%
+  dplyr::summarise(mean_depth = mean (depth),
+            SD_depth = sd(depth),
+            SE_depth = SD_depth/sqrt(n()))
+```
+
+################################################################################################################
+################################## Make a map of the sampling area #############################################
+################################################ Figure 1 ######################################################
+################################################################################################################
+
+```{r}
+#install.packages (c('))
+list.of.packages <- c("cowplot", "googleway", "ggplot2", "ggrepel", 
+"ggspatial", "libwgeom", "sf",'ggmap', 'maptools', 'maps', 'rnaturalearth', 'rnaturalearthdata', 'rgeos')
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+library(ggmap)
+library(maptools)
+library(maps)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(libwgeom)
+library(cowplot)
+library(googleway)
+library(ggplot2)
+library(ggrepel)
+library(ggspatial)
+library(sf)
+library(rgeos)
+library(dplyr)
+library(tidyverse)
+
+##### Create my map of Australia #####
+world <- ne_countries(country = "australia", scale = "medium", returnclass = "sf")
+class(world)
+
+##### Create subset map of sampled GAB region in Australia #####
+ggplot (world)+
+  geom_sf () +
+  coord_sf(xlim = c(132.47, 137.59), ylim = c(-35.84, -31.87), expand = FALSE)
+
+#########################################################3
+land_color <- c('burlywood1')
+
+main <- ggplotGrob(ggplot(data = world) +
+  geom_sf(fill = land_color) +
+  coord_sf(xlim = c(110, 155), ylim = c(-45, -5), expand = FALSE) +
+  #coord_sf(crs = "+proj=lonlat +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs")
+  geom_rect(aes(xmin = 132, xmax = 137, ymin = -37, ymax = -31), color = "black", fill = NA)  +
+  theme(legend.position = 'none') +
+  #labs (x = 'Longitude', y = 'Latitude') +
+  #theme_mike_doane () +
+  theme_void () +
+  theme(axis.line = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=1)))
+ 
+
+####################################################### 
+
+
+gab_map <- gab_meta %>%
+  dplyr::select (sample, site_group, latitude, longitude) %>%
+  mutate (latitude = latitude*-1) %>%
+  distinct(site_group, .keep_all=TRUE)
+
+group.colors <- tibble (site_group = c('Lacy','ISF', 'Murat','WE'), color = c("#000000", "#E69F00", "#56B4E9", "#009E73"))
+gab_map <- gab_map %>% left_join (., group.colors, by = 'site_group')
+loc.list <- pull (gab_map, color)
+
+
+
+inset <- ggplot(data = world) +
+  geom_sf(fill = land_color) +
+  #geom_point(data = gab_map, aes( x = longitude, y= latitude), size = 3, pch = 19) +
+  coord_sf(xlim = c(132, 138), ylim = c(-35.84, -31.87), expand = FALSE) +
+    ggrepel::geom_text_repel(data = gab_map, aes(x = longitude, y = latitude, label = site_group), size = 10, 
+        fontface = "bold", nudge_x = c(0, 0, 0, 0), nudge_y = c(0,0,0, 0), box.padding = 0.7, point.padding = 0.5, segment.color = 'transparent') +
+  geom_point (data = gab_map, aes (x = longitude, y = latitude), alpha = 0.8, color = c("#000000","#56B4E9","#E69F00", "#009E73"), fill = c("#000000","#56B4E9","#E69F00", "#009E73"), size = 10, shape = 16) +
+  labs (x = 'Longitude', y = 'Latitude') +
+  theme_mike_doane () +
+  theme (axis.text.x = element_text(face = "bold", color = "black", size = 20, vjust= 1, hjust = 1),
+         axis.text.y = element_text(face = "bold", color = "black", size = 20),
+         axis.title.x = element_text (face = "bold", size = 25),
+         axis.title.y = element_text (face = "bold", size = 25),
+         legend.position = "none")
+inset 
+
+g3 <- inset + 
+  annotation_custom(grob = main, xmin = 132.5, xmax = 134.5, ymin = -35.5, ymax = -33.5)   
+    
+g3
+
+if (getwd() != "C:/Users/Mike/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures/")
+}
+png(file="sampling_map_GAB.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+g3
+dev.off()
+
+#ggsave ("C:/Users/doan0033/Dropbox/network analysis/analysis/mikedoane.figures/map.figure/whale_shark_sampling.jpeg", height = 15, width = 19, units = c("cm"), dpi = 300)
+
+``` 
+
+#######################################################
+################### Species groups ####################
+#################### Figure 2a ########################
+ 
+```{r}
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+barchart <- read.csv ("figure2a_data.csv", header = TRUE)
+
+bar <- barchart %>%
+  pivot_longer (!c(class,order), names_to ="method", values_to = "value") %>%
+  group_by (class, order) %>%
+  #mutate (order = fct_rev(order)) %>%
+  mutate (method = fct_rev(method))
+
+bar_names <- bar %>%
+  distinct(order, .keep_all = TRUE) %>%
+  group_by (class,order)
+  #mutate (order = fct_rev(order)) %>%
+  #mutate (method = fct_rev(method))
+
+color_use <- c("Both" = "#F0E442", "BRUVS" = "#0072B2", "eDNA"= "#D55E00")
+
+figure2a <- ggplot (bar, aes (factor(order,levels = unique(order)), value, fill = method)) +    #factor(order,levels = unique(order))
+  geom_bar (position = "stack", stat = "identity") +
+  coord_flip () +
+  facet_grid(class~., scales = "free",  switch = "y", space = "free") + #
+  scale_y_continuous (limits = c(0,50), expand  = c(0,0))+
+  xlab ("Taxa") +
+  ylab ("Number of Species") +
+  scale_fill_manual(values = color_use) +
+  theme_mike_doane() +
+  guides (fill = guide_legend(ncol=1, reverse = TRUE)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1, size = 20),
+         legend.title =element_blank(),
+         axis.ticks=element_line(size=1),
+         axis.text.y = element_text(size=17),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25))
+figure2a
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="figure2b.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+figure2a
+dev.off()
+```
+
+#######################################################
+################### Rarefaction curve #################
+#################### Figure 2b ########################
 ```{r}
 
-##### 16s Data #####
-primer_16nest <- read.csv ("16s_r_data.csv", header = TRUE)
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+rf <- read_excel ("figure_2_rarefraction_R.xlsx", sheet = "Sheet1")
 
-##### zOTU table for dataset #####
-otu_table_16s <- read.csv ("gab16nest_otu_R.csv", header = FALSE)
-otu_table_16s <- otu_table_16s %>% rename ("OTU" =1, "sequence"=2)
+# rf_sd_long <- rf %>%
+#   dplyr::select (c(Sample,All_SD, eDNA_SD, BRUVS_SD)) %>%
+#   dplyr::rename (All = "All_SD", eDNA = "eDNA_SD", BRUVS = "BRUVS_SD") %>%
+#   pivot_longer (-Sample, names_to="method", values_to="sd")
 
-##### Join the zOTU sequence with the dataset for downstream analysis
-primer_16nest <- primer_16nest %>% full_join (otu_table_16s, by = "OTU")
+# rf_rich_long <- rf %>%
+#   dplyr::select (c(Sample,All, eDNA, BRUVS)) %>%
+#   pivot_longer(-Sample, names_to = "method", values_to = "richness") %>%
+#   full_join (rf_sd_long, by = c("Sample", "method"))
 
-##### Elasmo-COI Data #####
-primer_elasmo <- read.csv ("elasmo_r_data.csv", header = TRUE)
+#col <- colorblind_pal()(8)
 
-##### zOTU table for dataset #####
-otu_table_elasmo <- read.csv ("gabelasmo_otu_R.csv", header = FALSE)
-otu_table_elasmo <- otu_table_elasmo %>% rename ("OTU" =1, "sequence"=2)
+#color_use <- c("All" = "#56B4E9", "#000000" "#E69F00"  "#009E73" "#F0E442" "#0072B2" "#D55E00" "#CC79A7"
+               
+#color_use <- c("All" = "#F0E442", "BRUVS" = "#0072B2", "eDNA"= "#D55E00")
+              
+figure2b <- ggplot () + #ggplot (rf_rich_long, aes (Sample, richness)) +
+  #geom_point (size = 5,aes (group = method, color = method)) +
+  #geom_errorbar(aes(ymin = richness-sd, ymax = richness+sd), width = 0.1) +
+  geom_ribbon(data = rf, aes(x = Sample, ymin = All - All_SD, ymax = All + All_SD), fill = "#F0E442", alpha = 0.2) +
+  geom_ribbon(data = rf, aes(x = Sample, ymin = BRUVS-BRUVS_SD, ymax = BRUVS + BRUVS_SD), fill = "#0072B2", alpha = 0.2) +
+  geom_ribbon(data = rf, aes(x = Sample, ymin = eDNA-eDNA_SD, ymax = eDNA + eDNA_SD), fill = "#D55E00", alpha = 0.2) +
+  geom_line(data = rf, aes(x = Sample, y = All), color = "#F0E442") +
+  geom_line(data = rf, aes(x = Sample, y = BRUVS), color = "#0072B2") +
+  geom_line(data = rf, aes(x = Sample, y = eDNA), color = "#D55E00") +
+  scale_x_continuous (limits = c(0,35), expand  = c(0,0)) +
+  #scale_color_manual (values = color_use) +
+  ylab ("Richness") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         legend.title = element_blank(),
+         legend.text = element_text(size=15))
 
-##### Join the zOTU sequence with the dataset for downstream analysis
-primer_elasmo <- primer_elasmo %>% full_join (otu_table_elasmo, by = "OTU")
+figure2b
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="R_figures/figure2b.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+figure2b
+dev.off()
+
+figure2b <- ggplot () + #ggplot (rf_rich_long, aes (Sample, richness)) +
+  #geom_point (size = 5,aes (group = method, color = method)) +
+  #geom_errorbar(aes(ymin = richness-sd, ymax = richness+sd), width = 0.1) +
+  geom_ribbon(data = rf, aes(x = Sample, ymin = All_l_95, ymax = All_u_95), fill = "#F0E442", alpha = 0.2) +
+  geom_ribbon(data = rf, aes(x = Sample, ymin = BRUVS_l_95, ymax = BRUVS_u_95), fill = "#0072B2", alpha = 0.2) +
+  geom_ribbon(data = rf, aes(x = Sample, ymin = eDNA_l_95, ymax = eDNA_u_95), fill = "#D55E00", alpha = 0.2) +
+  geom_line(data = rf, aes(x = Sample, y = All), color = "#F0E442") +
+  geom_line(data = rf, aes(x = Sample, y = BRUVS), color = "#0072B2") +
+  geom_line(data = rf, aes(x = Sample, y = eDNA), color = "#D55E00") +
+  scale_x_continuous (limits = c(0,35), expand  = c(0,0)) +
+  #scale_color_manual (values = color_use) +
+  ylab ("Richness") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         legend.title = element_blank(),
+         legend.text = element_text(size=15))
+
+figure2b
+png(file="R_figures/figure2b_95ci.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+figure2b
+dev.off()
+####################################################################################################
+### Figure 2 Legend
+####################################################################################################
+legend_2a <- cowplot::get_legend (figure2a)
+legend_2b <- cowplot::get_legend(figure2b)
+
+grid.newpage()
+grid.draw(legend)
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="figure2a_legend.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+grid.draw(legend_2a)
+dev.off()
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="figure2b_legend.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+grid.draw(legend_2b)
+dev.off()
+#####################################################################################################
+
+
+fitpoly <- rf_long %>% 
+  filter (dataset == "BRUV")
+
+#lm(rf_long, richness ~ poly(Sample,3))
+temp <-lm(richness~Sample +I(Sample^3), fitpoly)
+
+all_poly <- as.data.frame(fitted(temp))
+all_poly <- all_poly %>%
+  rownames_to_column ("Sample") %>%
+  dplyr::rename("All_fitted" = 2)
+
+fitpoly <- cbind (fitpoly, all_poly[,2]) 
+
+fitpoly <- fitpoly %>% dplyr::rename ("All_fitted" = 4)
+  
+ggplot (fitpoly, aes (x=Sample)) +
+  geom_point (size = 5, color = "red", aes (y = All_fitted)) +
+  geom_point (size = 5, color = "blue", aes (y = richness))+
+  #scale_color_manual (values = color_use) +
+  ylab ("Richness") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         legend.title = element_blank(),
+         legend.text = element_text(size=20))
 
 ```
 
+```{r}
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="R_figures/figure2.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
 
+cowplot::plot_grid (figure2a, figure2b, align = "v", axis = "l", labels = "AUTO", ncol =1)
+dev.off()
+
+```
+########## PCO figure ##########
+########## Figure 3a #################
+```{r}
+
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+PCO <- read_excel ("figure_4_PCO_R.xlsx", sheet = "Sheet1")
+PCO <- PCO %>%
+  mutate (Site = fct_relevel (Site, c("Lacy", "ISF", "Murat", "WE")))
+
+
+figure3a<- ggplot (PCO, aes (`Axis 1`, `Axis 2`, color = Site, shape = Method)) +
+  geom_point (size=5) +
+  scale_color_colorblind () +
+  labs(x= "PCO 1: 25.5 % of total variation", y = "PCO 2: 14.1 % of total variation") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=20),
+         axis.title.y = element_text(size=20),
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+figure3a
+
+ragg::agg_png("R_figures/figure4_10x10.png", width = 14, height = 10, units = "in", res = 300)
+figure4
+dev.off()
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+png(file="R_figures/test_figure4_10x10.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+figure4
+dev.off()
+
+
+
+PCO <- read_excel ("figure_4_PCO_R.xlsx", sheet = "Sheet1")
+PCO <- PCO %>%
+  filter (Method == "eDNA") %>%
+  mutate (Site = fct_relevel (Site, c("Lacy", "ISF", "Murat", "WE")))
+
+
+figure3b<- ggplot (PCO, aes (`Axis 1`, `Axis 2`, color = Site, shape = Method)) +
+  geom_point (size=5) +
+  scale_color_colorblind () +
+  labs(x= "PCO 1: 25.5 % of total variation", y = "PCO 2: 14.1 % of total variation") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=23),
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+figure3b
+```
+
+########## Method richness ##########
+########## Figure 3b #################
+```{r}
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+method_count <- read_excel ("richness_method_R.xlsx", sheet = "Sheet1")
+method_count <- method_count %>%
+  mutate (Site = fct_relevel(Site, c("Lacy", "ISF", "Murat","WE")),
+          Method = recode_factor (Method, BRUV = "BRUVS"))
+
+figure3b<- ggplot (method_count, aes (Site, Richness, color = Method)) +
+  geom_boxplot () +
+  geom_jitter(size = 5) +
+  #scale_color_colorblind () +
+  scale_color_manual (values = method_color)+
+  xlab ("Sample site") +
+  ylab ("Sample Richness") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20, vjust = 1, hjust=1),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=23),
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+figure3b
+
+ragg::agg_png("R_figures/figure5_10x10.png", width = 14, height = 10, units = "in", res = 300)
+figure5
+dev.off()
+
+
+method_site_richness <- aov (Richness ~ Site * Method, method_count)
+summary(method_site_richness)
+site_method_richness <- aov (Richness ~ Method * Site, method_count)
+
+### Tukey Post-Hoc test ###
+TukeyHSD (method_site_richness, "Site")
+TukeyHSD (method_site_richness, "Method")
+TukeyHSD (method_site_richness, "Site:Method")
+
+
+TukeyHSD (site_method_richness, "Site")
+TukeyHSD (site_method_richness, "Method")
+TukeyHSD (site_method_richness, "Method:Site")
+
+
+
+
+```
+
+########## Method function ##########
+########## Figure 3c #################
+```{r}
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+#function_method <- read_excel ("function_method_R.xlsx", sheet = "Sheet1")
+function_method <- read.csv ("function_method_R_site.csv")
+
+
+function_method <- function_method %>%
+  pivot_longer (!c(sample, location, method, sample_sup, location_sup), names_to = "group", values_to = "raw") %>%
+  group_by (sample) %>%
+  mutate(sample_total = sum(raw), percent = raw/sample_total) %>%
+  dplyr::select(-sample_total)
+  
+  mutate (prop = 100*percent) %>%
+  mutate (method = factor(method), group = factor(group))
+
+make_summary_3c <- function_method %>%
+  mutate(method = factor(method), group = factor(group)) %>%
+  group_by (method, group) %>%
+  dplyr::summarise(mean_group = mean(percent),
+                   sd_group = sd(percent),
+                   se_group = sd_group/sqrt(n()),
+                   median = median(percent),
+                   non_zero = sum (percent != 0))
+
+figure3c <- ggplot (function_method, aes (method, percent, color = group)) +
+  geom_boxplot () +
+  #geom_jitter(size = 3, width = 0.5) +
+  geom_point(position=position_dodge(width=0.75), size = 5,aes(group=group)) +
+  scale_color_manual (values = fish_color) +
+  labs(y= "Proportion of sample total", x = "Sampling method") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=23),
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+figure3c
+
+
+ragg::agg_png("R_figures/figure6_10x10.png", width = 14, height = 10, units = "in", res = 300)
+figure6
+dev.off()
+
+function_method_group <- aov (percent ~ method * group, function_method)
+function_group_method <- aov (percent ~ group * method, function_method)
+summary(function_method_group)
+summary(function_group_method)
+
+TukeyHSD (function_method_group, "method")
+TukeyHSD (function_method_group, "group")
+TukeyHSD (function_method_group, "method:group")
+
+TukeyHSD (function_group_method, "group:method")
+
+
+dunn_group <- dunn.test::dunn.test(function_method$percent, function_method$group, method = "bh")
+dunn_method <- dunn.test::dunn.test(function_method$percent, function_method$method, method = "bh")
+
+benthic_test <- function_method %>%
+  filter (group == "benthic")
+dunn_benthic <- dunn.test::dunn.test(benthic_test$percent, benthic_test$group, method = "bh")
+
+
+```
+
+Save all of figure 3 (a,b,c) into a single plot window
+```{r}
+
+# Adjust label positions to prevent overlap
+labels_custom <- c("A", "B", "C")
+label_positions_x <- c(0.1, 0.1, 0.1)  # Adjust the x positions to move labels right
+label_positions_y <- c(1, 1, 1)        # Keep labels at the top
+
+png(file="R_figures/figure3.png", res=600, width=8000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+cowplot::plot_grid (figure3a, figure3b, figure3c, labels = labels_custom, ncol =2, abel_x = label_positions_x, label_y = label_positions_y)
+dev.off()
+```
+
+####### Supplemental Figure 2 #######
+```{r}
+
+function_method <- read.csv ("function_method_R_site.csv")
+
+function_method <- function_method %>%
+  pivot_longer (!c(sample, location, method, sample_sup, location_sup), names_to = "group", values_to = "raw") %>%
+  group_by (sample) %>%
+  mutate(sample_total = sum(raw), percent = raw/sample_total) %>%
+  dplyr::select(-sample_total) %>%
+  mutate (location = factor(location)) %>%
+  mutate (location_sup = fct_recode (location_sup, "Lacy" = "Evans", "Isle St Francis"= "StFran", "Western Eyre" = "Western_Eyre"))
+
+order <- c("Lacy", "Isle St Francis", "Murat", "Western Eyre")
+function_method$location_sup <- factor(function_method$location_sup, levels = order)
+
+sup <- ggplot (function_method, aes (interaction(sample_sup, location_sup,method, sep = "!"), percent, fill = group)) +
+  geom_bar (position = "fill", stat = "identity") +
+  scale_x_discrete(guide = ggh4x::guide_axis_nested(delim="!"), name = "Location") +
+  labs(y = "Proportion of replicate richness") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(linewidth=1),
+         axis.text.x=element_text(size=15),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         #legend.position = "none",
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+
+sup
+
+ragg::agg_png("R_figures/sup2_10x10.png", width = 17, height = 10, units = "in", res = 300)
+sup
+dev.off()
+```
+
+########## Combined eDNA and BRUVS - Site richness ###########
+######### Figure 4a #################
+```{r}
+library(rstatix)
+##### Run Dunn-test on dataset
+
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+site_count <- read.csv ("site_dunn.csv")
+
+site_count <- site_count %>%
+  dplyr::mutate (site = dplyr::recode_factor(site, 'Evans/Lacy' = "Lacy", 'StFran' = "ISF", 'Murat' ="Murat", 'WesternEyre' = "WE"),
+          site = fct_relevel (site, "Lacy", "ISF", "Murat", "WE"))
+
+#stat.test.dunn <- site_count %>% 
+  #dunn_test (count ~ site, p.adjust.method = "fdr") %>%
+  #add_xy_position(x = "site") %>%
+  #mutate (p.adj.sig = format (p.adj, scientific = TRUE, digits = 3))
+  
+#my_krus <- kruskal.test (count~site, data = site_count)
+#my_dunn <- dunn.test (site_count$count, site_count$site, kw = TRUE, method = "bonferroni")
+result <- aov(sqrt(count) ~ site, data = site_count)
+summary(result)
+TukeyHSD(result)
+
+figure4a<- ggplot (site_count, aes (site, count, color = site)) +
+  geom_boxplot () +
+  geom_jitter(size = 5) +
+  #scale_color_colorblind () +
+  scale_color_manual (values = sites_color) +
+  labs(y= "Richness of each sample", x = "Sampling site") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20, vjust = 1, hjust=1),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25, margin = margin(r=10)),
+         legend.position = "none",
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+  #stat_kruskal_test () +
+  #stat_pvalue_manual(stat.test.dunn, label = "p.adj.sig", hide.ns = TRUE)
+figure4a
+
+ragg::agg_png("R_figures/figure7_10x10.png", width = 14, height = 10, units = "in", res = 300)
+figure7
+dev.off()
+
+
+
+
+```
+
+################################################################################
+##################### Richness comparison across depth ####################
+###########################     Figure x   ##################################
+
+```{r}
+depth_richness <- read.csv ("location_richness.csv", header = TRUE)
+
+depth_richness <- depth_richness %>%
+  dplyr::select(c(X, S,d,J., Group_cluster)) %>%
+  dplyr::rename (sample = "X") %>%
+  left_join ((gab_meta %>% dplyr::select (sample, depth,site_group)), by = "sample" )
+
+ggplot(depth_richness, aes (Group_cluster, S)) +
+  geom_boxplot () +
+  theme_mike_doane()
+
+ggplot (depth_richness, aes(S, depth)) +
+  geom_point (aes (color = site_group)) +
+  geom_smooth (method = "lm") +
+  theme_mike_doane()
+
+richness_model <- lm(S ~ depth, data = depth_richness)
+
+m1 <- aov (S~site_group, data = depth_richness)
+m2 <- aov (S~Group_cluster, data = depth_richness)
+
+# Calculate AICc for Model 1
+n <- length(depth_richness$S)
+k1 <- length(coefficients(m1))
+AICc1 <- AIC(m1, k = k1) + 2 * (k1 * (k1 + 1)) / (n - k1 - 1)
+
+# Calculate AICc for Model 2
+k2 <- length(coefficients(m2))
+AICc2 <- AIC(m2, k = k2) + 2 * (k2 * (k2 + 1)) / (n - k2 - 1)
+
+# Compare AICc values
+if (AICc1 < AICc2) {
+  cat("Model 1 (with interaction) has a lower AICc value and is preferred.\n")
+} else {
+  cat("Model 2 (without interaction) has a lower AICc value and is preferred.\n")
+}
+```
+
+######## Figure 4b ########
+######## PCO #############
+##########################
+
+```{r}
+PCO <- read_excel ("figure_8_PCO_R.xlsx", sheet = "Sheet1")
+PCO <- PCO %>%
+  mutate (Site = fct_relevel (Site, c("Lacy", "ISF", "Murat", "WE"))) %>%
+  left_join (gab_meta %>% dplyr::select(sample,depth), by = c("Sample" = "sample"))
+
+
+figure4b<- ggplot (PCO, aes (`Axis 1`, `Axis 2`)) +
+  geom_point (data = PCO, aes (size = depth, color = Site)) +
+  scale_size (range = c(1,15))+
+  #scale_color_colorblind () +
+  scale_color_manual (values = sites_color) +
+  labs(size = "Depth(m)") +
+  labs(size = "Depth(m)", color = "Sample site", x= "PCO 1: 46.2 % of total variation", y = "PCO 2: 10.0 % of total variation") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         legend.position = "none",
+         legend.title = element_text(size = 35),
+         legend.text = element_text(size=30)) +
+  guides (color = guide_legend(override.aes = list (size = 10)))
+figure4b
+
+ragg::agg_png("R_figures/figure4b_10x10.png", width = 14, height = 10, units = "in", res = 300)
+figure4b
+dev.off()
+
+figure4b_legend<- ggplot (PCO, aes (`Axis 1`, `Axis 2`)) +
+  geom_point (data = PCO, aes (size = depth, color = Site)) +
+  scale_size (range = c(1,15))+
+  #scale_color_colorblind () +
+  scale_color_manual (values = sites_color) +
+  labs(size = "Depth(m)") +
+  labs(size = "Depth(m)", color = "Sample site", x= "PCO 1: 46.2 % of total variation", y = "PCO 2: 10.0 % of total variation") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         legend.title = element_text(size = 35),
+         legend.text = element_text(size=30)) +
+  guides (color = guide_legend(override.aes = list (size = 10)))
+
+legends <- get_legend(figure4b_legend)
+
+ragg::agg_png("R_figures/figure4_legend.png", width = 14, height = 10, units = "in", res = 300)
+plot(legends)
+dev.off()
+``` 
+
+########################################
+####### Figure 4 plots #################
+########################################
+
+```{r}
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="figure4.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+cowplot::plot_grid (figure4a, figure4b, labels = "AUTO", ncol =1)
+dev.off()
+```
+######## Figure 5a ########
+nMDS
+
+```{r}
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+figure5a <- read_excel ("figure_9_nMDS_R.xlsx", sheet = "Sheet1")
+
+figure5a <- figure5a %>%
+  mutate (Site = fct_relevel (Site, "Lacy", "ISF", "Murat", "WE")) %>%
+  left_join (gab_meta %>% dplyr::select(sample,depth), by = c("Sample" = "sample"))
+
+fig5a <- ggplot(figure5a, aes(x = MDS1, y = MDS2)) + 
+  geom_point(data = figure5a, aes(size = depth, colour = Site)) +
+  scale_size (range = c(1,13))+
+  #scale_color_colorblind()+
+  scale_color_manual (name = "Sampling site", values = sites_color) +  
+  labs (size = "Depth(m)", x = "MDS1", y = NULL) +
+    theme_mike_doane() +
+    theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text (size = 20),
+         axis.text.y = element_text(size=20),
+         legend.position = "none",
+         legend.title = element_text(size = 35),
+         legend.text = element_text(size=30),
+         plot.margin = margin(0,0,0,-2)) +
+  guides (colour = guide_legend(order = 1),
+          shape = guide_legend(order=2))
+  
+fig5a
+
+ragg::agg_png("R_figures/figure9a_10x10.png", width = 14, height = 10, units = "in", res = 300)
+fig5a
+dev.off()
+
+fig5a_legend <- ggplot(figure5a, aes(x = MDS1, y = MDS2)) + 
+  geom_point(data = figure5a, aes(size = depth, colour = Site)) +
+  scale_size (range = c(1,13))+
+  #scale_color_colorblind()+
+  scale_color_manual (name = "Sampling site", values = sites_color) +  
+  labs (size = "Depth(m)", x = "MDS1", y = "MDS2") +
+    theme_mike_doane() +
+    theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text (size = 20),
+         axis.text.y = element_text(size=20),
+         legend.title = element_text(size = 35),
+         legend.text = element_text(size=30)) +
+  guides (colour = guide_legend(order = 1, override.aes = list(size =10)),
+          shape = guide_legend(order=2))
+
+
+legends <- get_legend(fig5a_legend)
+
+ragg::agg_png("R_figures/figure5_legend.png", width = 14, height = 10, units = "in", res = 300)
+plot(legends)
+dev.off()
+
+```
+
+######## Functional distribution across sites #########
+######## Figure 5b #####################################
+```{r}
+
+#setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/")
+functional_groups <- read_excel ("functional_groups_R.xlsx", sheet = "percent")
+
+
+
+func_bar <- functional_groups %>%
+  dplyr::select (c(sample_names, location, demersal, pelagic, benthic)) %>%
+  pivot_longer (!c(sample_names, location), names_to = "habitat", values_to = "percent") %>%
+  mutate (location = fct_recode (location, "Lacy" = "Evans/Lacy", "Isle St Francis"= "StFran", "Western Eyre" = "WesternEyre"))
+
+order <- c("Lacy", "Isle St Francis", "Murat", "Western Eyre")
+func_bar$location <- factor(func_bar$location, levels = order)
+func_bar <- func_bar %>%
+  arrange(location, sample_names) %>%
+  mutate (sample_names = factor(sample_names, levels = unique(sample_names)))
+  
+sup3 <- ggplot (func_bar, aes (interaction(sample_names, location, sep = "!"), percent, fill = habitat)) +
+  geom_bar (position = "fill", stat = "identity") +
+  scale_x_discrete(guide = ggh4x::guide_axis_nested(delim="!"), name = "Location") +
+  labs(y = "Proportion of replicate richness") +
+  theme_mike_doane() +
+  theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25),
+         #legend.position = "none",
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+
+ragg::agg_png("R_figures/sup3_10x10.png", width = 14, height = 10, units = "in", res = 300)
+sup3
+dev.off()
+
+
+######### Set datasheet for scatterplot ########
+functional_groups <- as.data.frame(functional_groups)
+functional_groups <- functional_groups %>%
+  dplyr::mutate (location = dplyr::recode_factor (location, 'Evans/Lacy' = "Lacy", 'StFran' = "ISF", 'Murat' = "Murat", 'WesternEyre' = "WE"),
+          location = fct_relevel (location, "Lacy", "ISF", "Murat", "WE")) %>%
+          dplyr::rename ("Demersal" = "demersal", "Pelagic" = "pelagic", "Benthic" = "benthic")
+
+
+z_summary <- functional_groups %>%
+  mutate (location = as.factor(location)) %>% 
+  select (location, Demersal, Pelagic, Benthic, depth) %>%
+  pivot_longer (!location, names_to = "group", values_to = "percent") %>%
+  group_by (location, group) %>%
+  dplyr::summarize (mean = mean(percent), median = median(percent), n = n(), sd = sd(percent), se = sd/sqrt(n))
+
+
+###### to test function z.fil ########
+#target <- c("demersal", "depth")
+#fish_group <- "benthic"
+#error1 <- "sd1"
+#error2 <- "sd_depth"
+######################################
+
+z.fil <- function(fish_group, error1, error2) {
+  variable <- fish_group
+  order <- c(fish_group, "depth")
+  z_df <- z_summary %>% 
+  filter(group %in% c(!!fish_group, "depth")) %>% 
+  select (location, group, mean, sd, se) %>%
+  #mutate (group = fct_relevel (group, order)) %>%
+  arrange(match(group, order)) %>%
+  pivot_wider (names_from = group, values_from = c(mean, sd, se)) %>%
+  dplyr::rename({{fish_group}} := 2, depth = 3, sd1 = 4, sd_depth = 5, se1 = 6, se_depth = 7)
+  zz_df <- as.data.frame(z_df)
+  print(variable)
+ 
+  
+  ggplot(functional_groups,aes(x = get(variable), y = depth)) + 
+    geom_point(size = 3, aes(colour = location)) +
+    geom_smooth (method = "lm", fill = "grey") +
+    geom_point(data = z_df,size = 10, aes(colour = location)) +
+    #geom_line (data = z_df) +
+    geom_errorbarh(data = z_df, size = 2, aes(xmin = get(fish_group) - get(error1), xmax = get(fish_group) + get(error1), y = depth, colour = location, height = 5)) + 
+    geom_errorbar(data = z_df, size = 2, aes(ymin = depth - get(error2), ymax = depth + get(error2), x = get(fish_group), colour = location, width = 0.05)) +
+    scale_color_colorblind()+
+    theme_mike_doane() +
+    ggtitle (variable) +
+    theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text (size = 20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_blank(),
+         axis.title.y = element_blank(),
+         legend.title = element_blank(),
+         legend.text = element_text(size=30),
+         legend.position = "none")
+  
+}
+
+b <- z.fil("Benthic", "sd1", "sd_depth") #z.fil(fish_group, error1, error2) -- fish_group = benthic, demersal, pelagic; error = se1/se_depth or sd1/sd_depth
+d <- z.fil("Demersal", "sd1", "sd_depth")
+p <- z.fil("Pelagic", "sd1", "sd_depth")
+
+new_layout <- c(NA,1)
+
+figure_out <- grid.arrange (b, d, p, nrow = 1)
+
+#grid.draw(b,d,p, nrow=1)
+#figure_out1 <- gridExtra::arrangeGrob (b, d, p, nrow = 1)
+figure5b <- grid::grid.draw(figure_out)
+
+png <- function(...) ragg::agg_png(..., res = 300, units = "in")
+ggsave("R_figures/figure9b_10x10.png", plot = figure_out, device = png, width = 18, height = 10, units = "in",
+       dpi = 100) # units = "in"
+
+#ragg::agg_png("R_figures/figure9b_10x10.png", width = 14, height = 10, units = "in", res = 300)
+#figure9
+#dev.off()
+
+
+#### Make just the legend from figure above ######
+# Using the cowplot package
+order <- c("Pelagic", "depth")
+ z_df <- z_summary %>% 
+  filter(group %in% c("Pelagic", "depth")) %>% 
+  select (location, group, mean, sd, se) %>%
+  #mutate (group = fct_relevel (group, order)) %>%
+  arrange(match(group, order)) %>%
+  pivot_wider (names_from = group, values_from = c(mean, sd, se)) %>%
+  dplyr::rename(Pelagic = 2, depth = 3, sd1 = 4, sd_depth = 5, se1 = 6, se_depth = 7)
+
+fig <- ggplot(functional_groups,aes(x = Pelagic, y = depth)) + 
+    geom_point(size = 3, aes(colour = location)) +
+    geom_smooth (method = "lm", fill = "grey") +
+    geom_point(data = z_df,size = 10, aes(colour = location)) +
+    #geom_line (data = z_df) +
+    geom_errorbarh(data = z_df, size = 2, aes(xmin = Pelagic - sd1, xmax = Pelagic + sd1, y = depth, colour = location, height = 5)) + 
+    geom_errorbar(data = z_df, size = 2, aes(ymin = depth - sd_depth, ymax = depth + sd_depth, x = Pelagic, colour = location, width = 0.05)) +
+    xlab ("Pelagic") +
+    scale_color_colorblind()+
+    theme_mike_doane() +
+    theme (axis.ticks=element_line(size=1),
+         axis.text.x=element_text(size=20),
+         axis.text.y = element_text(size=20),
+         axis.title.x=element_text(size=25),
+         axis.title.y = element_text(size=25, margin = margin(r=10)),
+         legend.title = element_blank(),
+         legend.text = element_text(size=30))
+
+
+legend <- cowplot::get_legend(fig)
+
+grid.newpage()
+figure5b_legend <- grid.draw(legend)
+
+#ragg::agg_png("R_figures/figure9_legend_10x10.png", width = 14, height = 10, units = "in", res = 300)
+#figure9_legend
+#dev.off()
+
+png <- function(...) ragg::agg_png(..., res = 300, units = "in")
+cowplot::ggsave2("R_figures/figureb_legend.png", plot = figure9_legend, device = png, width = 18, height = 10, units = "in",
+       dpi = 100) # units = "in"
+
+############################################################################################################
+
+fish_groups <- functional_groups %>%
+  select (-c(total, depth)) %>%
+  pivot_longer (!c("sample_names", "location"), names_to = "group", values_to = "percent") %>%
+  mutate (plot_group = fct_relevel (group, c("Benthic", "Demersal", "Pelagic"))) 
+  
+dunn.test::dunn.test (fish_groups$percent, fish_groups$plot_group, method = "bh")
+dunn.test::dunn.test (fish_groups$percent, fish_groups$location, method = "bh")
+
+depth_boxplot <- as.data.frame(z_summary)
+depth_boxplot <- depth_boxplot %>% 
+  filter (group == "depth")
+
+ggplot (functional_boxplots, aes (group, percent, color = location, fill = location)) +
+  geom_boxplot() +
+  scale_fill_colorblind (name = "Location") +
+  scale_color_colorblind(name = "Location") +
+  facet_wrap(~plot_group, scales = "free_y") +
+  theme_mike_doane()
+
+p1 <- ggplot (functional_boxplots %>% filter(group %in% c("demersal", "pelagic", "benthic")), aes (location, (percent*100), color = group, fill = group)) +
+  geom_boxplot() +
+  scale_fill_colorblind (name = "group") +
+  scale_color_colorblind(name = "group") +
+  labs (y= "Percent of species per sample", x = "Sample site") +
+  #geom_line () +
+  #facet_wrap(~plot_group, scales = "free_y") +
+  theme_mike_doane() +
+  theme(legend.title = element_blank(),
+        axis.title.y = element_text(margin=margin(r=10)))
+
+p2 <- ggplot (functional_boxplots %>% filter(group == "depth"), aes (location, percent, color = group, fill = group)) +
+  geom_boxplot() +
+  scale_fill_colorblind (name = "group") +
+  scale_color_colorblind(name = "group") +
+  labs(y= "Site depth (m)", x = "Sample site") +
+  #geom_line () +
+  #facet_wrap(~plot_group, scales = "free_y") +
+  theme_mike_doane() +
+  theme(legend.position="none",
+        legend.title=element_blank(),
+        axis.title.y = element_text(margin=margin(r=10)))
+
+grid.arrange (p1, p2, nrow = 1)
+
+###### Is depth significantly different? #########
+dunn <- functional_boxplots %>% filter(group == "depth")
+dunn.test::dunn.test (sqrt(dunn$percent), dunn$location, method = "bh")
+
+#Demersal
+ggplot (functional_groups, aes (x = Demersal, y = depth, color = location)) +
+  geom_point (size = 7) +
+  geom_smooth (method = 'lm') +
+  theme_mike_doane()
+demersal_lm <- lm (depth ~ Demersal, data = functional_groups)
+summary(demersal_lm)
+
+ggplot (functional_groups, aes (x = demersal, y = depth)) +
+  geom_point (size = 7, aes (color = location)) +
+  geom_smooth (method = 'lm') +
+  theme_mike_doane()
+
+ggplot (functional_groups, aes (x = )) +
+  geom_boxplot ()
+#Pelagic
+ggplot (functional_groups, aes (x = pelagic, y = depth, color = location)) +
+  geom_point (size = 7) +
+  geom_smooth (method = "lm") +
+  theme_mike_doane1()
+
+pelagic_lm <- lm (depth ~ Pelagic, data = functional_groups)
+summary(pelagic_lm)
+
+#Benthic
+ggplot (functional_groups, aes (x = benthic, y = depth)) +
+  geom_point (size = 7, aes (color = location)) +
+  geom_smooth (method = "lm") +
+  theme_mike_doane()
+
+benthic_lm <- lm (depth ~ Benthic, data = functional_groups)
+summary(benthic_lm)
+
+
+dunn.test::dunn.test(functional_groups$demersal, functional_groups$location, method = "bh")
+dunn.test::dunn.test(functional_groups$pelagic, functional_groups$location, method = "bh")
+dunn.test::dunn.test(functional_groups$benthic, functional_groups$location, method = "bh")
+
+functional_box <- functional_groups %>% select (location, demersal, pelagic, benthic) %>% pivot_longer (!location, names_to = "position", values_to = "percent")
+ggplot (functional_box, aes(location, percent, fill = position)) +
+  geom_boxplot() +
+  theme_mike_doane()
+
+###### Depth boxplots ######
+ggplot (functional_groups, aes (location, depth, color = location)) +
+  geom_boxplot () +
+  geom_jitter () +
+  theme_mike_doane()
+
+dunn.test::dunn.test(functional_groups$depth, functional_groups$location, method = "bh")
+``` 
+
+########################################
+####### Figure 5 plots #################
+########################################
+
+```{r}
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/GAB_eDNA_DEW_manuscript/analysis/GAB_eDNA_analysis/R_figures")
+}
+png(file="R_figures/figure5.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+cowplot::plot_grid (fig5a, figure_out, labels = "AUTO", ncol = 1, align = "v", axis = "l")
+dev.off()
+```
+
+############ SIMPER across methods ############
+```{r}
+method_simper <- read_excel ("method_site_PA_R.xlsx", sheet = "comm")
+method_simper_tranposed <- method_simper %>% 
+  pivot_longer (!Species, names_to = "replicates", values_to = "presence") %>%
+  #filter (!replicates %in% c("MU_01", "SF_06", "WE_01", "WE_02")) %>%
+  pivot_wider (names_from = "Species", values_from = "presence") %>%
+  column_to_rownames("replicates")
+
+method_simper_meta <- read_excel("method_site_PA_R.xlsx", sheet = "meta")
+method_simper_meta$Sites <- as.factor(method_simper_meta$Sites)
+method_simper_meta$Method <- as.factor(method_simper_meta$Method)
+
+sim_out <- with (method_simper_meta, simper (method_simper_tranposed, Method, permutations = 999))
+summary (sim_out)
+```
+
+############ SIMPER across sites
+```{r}
+site_simper <- read_excel ("site_PA_R.xlsx", sheet = "comm_data")
+site_simper_tranposed <- site_simper %>% 
+  pivot_longer (!Species, names_to = "replicates", values_to = "presence") %>%
+  pivot_wider (names_from = "Species", values_from = "presence") %>%
+  column_to_rownames("replicates")
+
+site_simper_meta <- read_excel("site_PA_R.xlsx", sheet = "groups")
+site_simper_meta$Sites <- as.factor(site_simper_meta$Sites)
+site_simper_meta$Group_cluster <- as.factor(site_simper_meta$Group_cluster)
+
+sim_out <- with (site_simper_meta, simper (site_simper_tranposed, Group_cluster, permutations = 999))
+summary (sim_out)
+
+```
+
+########### DO NOT USE ########
+DESEQ of species difference across sampling groups
+```{r}
+sample_data <- read_excel("deseq_R.xlsx", sheet = "data")
+sample_data <- sample_data %>% column_to_rownames("species")
+metadata <- read_excel ("deseq_R.xlsx", sheet = "metadata")
+
+
+dds <- DESeqDataSetFromMatrix (countData = sample_data,
+                               colData = metadata,
+                               design = ~Method)
+### Run Deseq
+print(f)
+dds.out <- DESeq(dds)
+dseqObjs[[f]] <- dds.out 
+
+### view results
+res.temp <- results(dds.out)
+res.temp <- res.temp[order(res.temp$padj),]
+res.list[[f]] <- res.temp
+
+lnames <- res.temp@rownames
+lcolnames <- c('baseMean', 'log2FoldChange', 'lfcSE', 'stat', 'pvalue', 'padj')
+l1<- res.temp@listData$baseMean
+l2 <- res.temp@listData$log2FoldChange
+l3 <- res.temp@listData$lfcSE
+l4 <- res.temp@listData$stat
+l5 <- res.temp@listData$pvalue
+l6 <- res.temp@listData$padj
+
+output.df <- cbind (l1, l2, l3, l4, l5, l6)
+rownames(output.df) <- lnames
+colnames(output.df) <- lcolnames
+output.df <- as.data.frame(output.df)
+
+results.output[[f]] <- output.df
+rm(output.df)
+}
+
+summary(res)
+res <- res[order(res$padj),]
+
+```
